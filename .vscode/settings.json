@@ -1,0 +1,5 @@
+{
+  "Lua.workspace.library": ["../dcs_script_library"],
+  "Lua.diagnostics.disable": ["deprecated"],
+  "Lua.runtime.version": "Lua 5.1"
+}
