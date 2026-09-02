@@ -80,14 +80,25 @@ for typeName in pairs(LogisticCommander and LogisticCommander.AllowedToCarrySupp
     end
 end
 
--- 2000 lb in kilograms. setUnitInternalCargo takes kilograms and replaces the
--- unit's cargo mass outright, so Foothold's own 100 kg per supply is re-applied
--- alongside this rather than being left behind.
+-- A loaded MXU-648 is the baseline charge, scaled by the config multiplier:
+-- TravelPodPenaltyWeight 1.0 is a full pod, 0.5 half of one, 0 no charge at all.
+-- setUnitInternalCargo takes kilograms and replaces the unit's cargo mass
+-- outright, so Foothold's own 100 kg per supply is re-applied alongside this
+-- rather than being left behind.
+local POD_CARGO_WEIGHT_LB = 2000 * travelPodPenaltyWeight
 local POD_CARGO_WEIGHT_KG = 907 * travelPodPenaltyWeight
 local FOOTHOLD_SUPPLY_WEIGHT_KG = 100
 
-local POD_CARGO_REMINDER =
-    "Supplies ride in an MXU-648 travel pod. 4000 lb is now aboard whether a pod is fitted or not, so plan the takeoff roll and climb accordingly."
+-- Quote the charge the pilot is actually flying with, not the baseline, so the
+-- number in the message matches what the jet does on the takeoff roll.
+local POD_CARGO_REMINDER
+if POD_CARGO_WEIGHT_LB > 0 then
+    POD_CARGO_REMINDER = string.format(
+        "Supplies ride in an MXU-648 travel pod. %.0f lb (%.0f kg) is now aboard whether a pod is fitted or not, so plan the takeoff roll and climb accordingly.",
+        POD_CARGO_WEIGHT_LB, POD_CARGO_WEIGHT_KG)
+else
+    POD_CARGO_REMINDER = "Supplies ride in an MXU-648 travel pod. No pod weight penalty is in effect."
+end
 
 -- Wrapped rather than replaced so a Foothold update keeps whatever the stock
 -- loadSupplies does. LogisticCommander instances inherit through __index, so
