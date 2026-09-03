@@ -636,6 +636,12 @@ end
 --
 -- Ordered most dangerous first and capped, because this is the last column on
 -- an already wide row and a full order of battle would wrap it.
+--
+-- EWR's rank is close to academic on this mission: an EWR is always its own
+-- objective, sited apart so it can cue several SAM zones at once, so it never
+-- competes with launchers for one of the three slots. It ranks here rather than
+-- first because the order is about what threatens the aircraft, and a radar
+-- does not.
 local DEFENCE_CATEGORIES = {{
     label = "SAM",
     attributes = {"LR SAM", "MR SAM"}
