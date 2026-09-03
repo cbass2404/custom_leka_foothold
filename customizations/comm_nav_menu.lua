@@ -1,7 +1,6 @@
 local navMenuEnabled = NavMenuEnabled ~= false
 local navMenuResultCount = NavMenuResultCount or 5
 local navMenuDisplayTime = NavMenuDisplayTime or 30
-local navMenuSweepSeconds = NavMenuSweepSeconds or 30
 -- A red zone this close to the front line is reported FRONT rather than REAR.
 local navFrontlineThresholdNm = NavFrontlineThresholdNm or 15
 
@@ -137,6 +136,11 @@ end
 -- read mmHg. So is the datum: NATO practice is QNH, Soviet practice and the
 -- warbirds are QFE.
 --
+-- Helicopters are the exception to the distance rule: they always read
+-- kilometres, whatever their nation flies fixed wing in. Rotary crews plan,
+-- brief and call ranges in km, so NM in a Huey would be a conversion the pilot
+-- has to undo. GetProfile enforces this for any helicopter, listed here or not.
+--
 -- Keyed on DCS type names, which match the ones in Foothold's CAREER_AIRCRAFT
 -- table. Init audits this against that table and logs anything missing, so a
 -- module ED adds shows up in dcs.log rather than silently reading as a Viper.
@@ -175,6 +179,26 @@ local PROFILE_DE_PROP = {
 local PROFILE_VIGGEN = {
     dist = "SEmil",
     press = "hPa",
+    datum = "QFE"
+}
+
+-- Rotary. Same pressure and datum as the nation's fast jets, distance always
+-- in km. Soviet rotary is a separate table from PROFILE_SOVIET despite holding
+-- the same values today, so a later edit to the fixed wing Soviet profile
+-- cannot quietly move the Hind off kilometres.
+local PROFILE_US_HELO = {
+    dist = "km",
+    press = "inHg",
+    datum = "QNH"
+}
+local PROFILE_EURO_HELO = {
+    dist = "km",
+    press = "hPa",
+    datum = "QNH"
+}
+local PROFILE_SOVIET_HELO = {
+    dist = "km",
+    press = "mmHg",
     datum = "QFE"
 }
 
@@ -256,24 +280,24 @@ local airframe_profiles = {
     ["Su-33"] = PROFILE_SOVIET,
     ["J-11A"] = PROFILE_SOVIET,
 
-    -- Rotary
-    ["UH-1H"] = PROFILE_US_JET,
-    ["UH-60L"] = PROFILE_US_JET,
-    ["UH-60L_DAP"] = PROFILE_US_JET,
-    ["CH-47Fbl1"] = PROFILE_US_JET,
-    ["AH-64D_BLK_II"] = PROFILE_US_JET,
-    ["OH58D"] = PROFILE_US_JET,
-    ["OH-6A"] = PROFILE_US_JET,
-    ["SA342L"] = PROFILE_EURO_JET,
-    ["SA342M"] = PROFILE_EURO_JET,
-    ["SA342Minigun"] = PROFILE_EURO_JET,
-    ["SA342Mistral"] = PROFILE_EURO_JET,
-    ["Mi-8MT"] = PROFILE_SOVIET,
-    ["Mi-8MTV2"] = PROFILE_SOVIET,
-    ["Mi-24P"] = PROFILE_SOVIET,
-    ["Mi-24V"] = PROFILE_SOVIET,
-    ["Ka-50"] = PROFILE_SOVIET,
-    ["Ka-50_3"] = PROFILE_SOVIET,
+    -- Rotary. All km, whatever the nation's fixed wing reads.
+    ["UH-1H"] = PROFILE_US_HELO,
+    ["UH-60L"] = PROFILE_US_HELO,
+    ["UH-60L_DAP"] = PROFILE_US_HELO,
+    ["CH-47Fbl1"] = PROFILE_US_HELO,
+    ["AH-64D_BLK_II"] = PROFILE_US_HELO,
+    ["OH58D"] = PROFILE_US_HELO,
+    ["OH-6A"] = PROFILE_US_HELO,
+    ["SA342L"] = PROFILE_EURO_HELO,
+    ["SA342M"] = PROFILE_EURO_HELO,
+    ["SA342Minigun"] = PROFILE_EURO_HELO,
+    ["SA342Mistral"] = PROFILE_EURO_HELO,
+    ["Mi-8MT"] = PROFILE_SOVIET_HELO,
+    ["Mi-8MTV2"] = PROFILE_SOVIET_HELO,
+    ["Mi-24P"] = PROFILE_SOVIET_HELO,
+    ["Mi-24V"] = PROFILE_SOVIET_HELO,
+    ["Ka-50"] = PROFILE_SOVIET_HELO,
+    ["Ka-50_3"] = PROFILE_SOVIET_HELO,
 
     -- Warbirds. All QFE, split by nation on unit and pressure.
     ["P-51D"] = PROFILE_US_PROP,
@@ -296,13 +320,59 @@ local airframe_profiles = {
     ["Yak-52"] = PROFILE_SOVIET
 }
 
-local function GetProfile(typeName)
-    return airframe_profiles[typeName] or DEFAULT_PROFILE
+local function IsHelicopter(unitObj)
+    local desc = unitObj.getDesc and unitObj:getDesc()
+
+    if desc and desc.category ~= nil and Unit and Unit.Category then
+        return desc.category == Unit.Category.HELICOPTER
+    end
+
+    return false
+end
+
+-- km variants of the fixed wing profiles, built once and reused. A helicopter
+-- module released after this file was written is not in the table above and
+-- would otherwise fall through to DEFAULT_PROFILE, which is nautical miles.
+local kilometreProfiles = {}
+
+local function AsKilometreProfile(profile)
+    if profile.dist == "km" then
+        return profile
+    end
+
+    local variant = kilometreProfiles[profile]
+
+    if not variant then
+        variant = {
+            dist = "km",
+            press = profile.press,
+            datum = profile.datum
+        }
+        kilometreProfiles[profile] = variant
+    end
+
+    return variant
+end
+
+-- unitObj is optional: pass it wherever the unit is in hand, which is every
+-- call site that reports a distance. Without it the type name alone decides,
+-- which is right for the listed airframes and only misses an unlisted helo.
+local function GetProfile(typeName, unitObj)
+    local profile = airframe_profiles[typeName] or DEFAULT_PROFILE
+
+    -- Pressure and datum still come from the profile; only the unit is forced.
+    if unitObj and IsHelicopter(unitObj) then
+        return AsKilometreProfile(profile)
+    end
+
+    return profile
 end
 
 -- Foothold already keeps the definitive list of type names it supports. Diff
 -- against it once at load so a missing profile is a log line rather than a
--- pilot quietly reading nautical miles in a Hind.
+-- pilot quietly reading inches of mercury in a Hind. A missing helicopter
+-- still gets kilometres from GetProfile; it is the pressure and datum that
+-- would be wrong, and only this audit would say so.
 local function AuditProfileCoverage()
     local career = BattleCommander and BattleCommander.CAREER_AIRCRAFT
 
@@ -322,7 +392,7 @@ local function AuditProfileCoverage()
 
     if #missing > 0 then
         table.sort(missing)
-        Log(env.warning, "no unit profile for %d airframe(s), defaulting to NM/inHg/QNH: %s", #missing,
+        Log(env.warning, "no unit profile for %d airframe(s), defaulting to NM/inHg/QNH (km if rotary): %s", #missing,
             table.concat(missing, ", "))
     end
 end
@@ -477,16 +547,6 @@ local function GetRequestingUnit(groupId)
             end
         end
     end
-end
-
-local function IsHelicopter(unitObj)
-    local desc = unitObj.getDesc and unitObj:getDesc()
-
-    if desc and desc.category ~= nil and Unit and Unit.Category then
-        return desc.category == Unit.Category.HELICOPTER
-    end
-
-    return false
 end
 
 -- ============================================================================
@@ -724,7 +784,7 @@ local function ReportLandingZones(groupId)
 
     local origin = unitObj:getPoint()
     local typeName = unitObj:getTypeName()
-    local profile = GetProfile(typeName)
+    local profile = GetProfile(typeName, unitObj)
     local magVar = GetMagVar(origin)
 
     -- A pad is a legal destination for anything that can hover onto it: the
@@ -800,7 +860,7 @@ local function ReportObjectives(groupId)
     end
 
     local origin = unitObj:getPoint()
-    local profile = GetProfile(unitObj:getTypeName())
+    local profile = GetProfile(unitObj:getTypeName(), unitObj)
     local magVar = GetMagVar(origin)
     local candidates = {}
 
@@ -847,8 +907,13 @@ end
 --
 -- The menu's shape never changes, so unlike Foothold's dynamic menus it is
 -- built once per group and left alone. Content is generated when the key is
--- pressed. A sweep adds menus for groups that appeared and drops the records of
--- groups that left, which is also what catches a re-slot.
+-- pressed.
+--
+-- Creation is event driven, one add per player entering an aircraft. There is
+-- deliberately no polling sweep: a repeating timer costs a scheduler slot for
+-- the whole mission and walks every player on every tick to discover something
+-- DCS already told us the instant it happened, and it makes the menu appear
+-- anywhere from immediately to a full interval after the pilot slots in.
 -- ============================================================================
 
 local NAV_MENU_TITLE = "Navigation"
@@ -888,32 +953,82 @@ local function AddNavMenu(groupId)
     nav_menus[groupId] = root
 end
 
-local function SweepNavMenus(_, time)
-    local seen = {}
-
-    for _, unitObj in pairs(coalition.getPlayers(coalition.side.BLUE) or {}) do
-        if unitObj and unitObj:isExist() then
-            local groupObj = unitObj:getGroup()
-
-            if groupObj and groupObj:isExist() then
-                local groupId = groupObj:getID()
-                seen[groupId] = true
-
-                if not nav_menus[groupId] then
-                    AddNavMenu(groupId)
-                end
-            end
-        end
+-- Rebuild rather than skip when a record already exists. DCS reuses group ids
+-- as dynamic spawns come and go, so a record left behind by a previous owner
+-- would make us skip a group that has no menu at all. Removing first also means
+-- BIRTH and PLAYER_ENTER_UNIT both firing for one slotting cannot leave two
+-- Navigation submenus stacked on the pilot's F10.
+local function InstallNavMenu(groupId)
+    if nav_menus[groupId] then
+        pcall(missionCommands.removeItemForGroup, groupId, nav_menus[groupId])
+        nav_menus[groupId] = nil
     end
 
-    for groupId in pairs(nav_menus) do
-        if not seen[groupId] then
-            missionCommands.removeItemForGroup(groupId, nav_menus[groupId])
-            nav_menus[groupId] = nil
-        end
+    AddNavMenu(groupId)
+end
+
+-- AI births outnumber player births by a wide margin on this mission, so the
+-- handler screens on the cheap fields first and only then asks for a name.
+local navMenuEventHandler = {}
+
+function navMenuEventHandler:onEvent(event)
+    if not event then
+        return
     end
 
-    return time + navMenuSweepSeconds
+    local id = event.id
+    local entering = id == world.event.S_EVENT_BIRTH or id == world.event.S_EVENT_PLAYER_ENTER_UNIT
+    local leaving = id == world.event.S_EVENT_PLAYER_LEAVE_UNIT
+
+    if not entering and not leaving then
+        return
+    end
+
+    local unitObj = event.initiator
+
+    if not unitObj or not unitObj.getPlayerName then
+        return
+    end
+
+    -- These events also carry statics and objects that are already gone, and
+    -- neither has the full Unit interface. Not worth an error in the log.
+    local ok, playerName = pcall(unitObj.getPlayerName, unitObj)
+
+    if not ok or not playerName then
+        return
+    end
+
+    local groupOk, groupObj = pcall(unitObj.getGroup, unitObj)
+
+    if not groupOk or not groupObj then
+        return
+    end
+
+    local idOk, groupId = pcall(groupObj.getID, groupObj)
+
+    if not idOk or not groupId then
+        return
+    end
+
+    if leaving then
+        -- The group is going away and its menus with it, so there is nothing to
+        -- remove; dropping the record just keeps this table from growing for
+        -- the length of the mission.
+        nav_menus[groupId] = nil
+        return
+    end
+
+    local sideOk, side = pcall(unitObj.getCoalition, unitObj)
+
+    if not sideOk or side ~= coalition.side.BLUE then
+        return
+    end
+
+    local addOk, err = pcall(InstallNavMenu, groupId)
+
+    if not addOk then
+        Log(env.error, "could not build menu for %s: %s", tostring(playerName), tostring(err))
+    end
 end
 
 -- ============================================================================
@@ -946,11 +1061,26 @@ local function Arm(_, time)
     InitMagvar()
     AuditProfileCoverage()
 
-    Log(env.info, "%d results per report, %ds sweep.", navMenuResultCount, navMenuSweepSeconds)
+    Log(env.info, "%d results per report, menus built on player entering an aircraft.", navMenuResultCount)
 
-    timer.scheduleFunction(SweepNavMenus, nil, time + 1)
+    -- Registered only once bc is up: a report fired from a menu that existed
+    -- before the battle commander did would have nothing to read.
+    world.addEventHandler(navMenuEventHandler)
 
-    -- nil ends this timer; the sweep reschedules itself from here on.
+    -- Anyone already sitting in a seat when this armed got their birth event
+    -- before the handler existed. One pass picks them up. This is a single call
+    -- on arm, not a schedule: from here the menu is purely event driven.
+    for _, unitObj in pairs(coalition.getPlayers(coalition.side.BLUE) or {}) do
+        if unitObj and unitObj:isExist() then
+            local groupObj = unitObj:getGroup()
+
+            if groupObj and groupObj:isExist() then
+                InstallNavMenu(groupObj:getID())
+            end
+        end
+    end
+
+    -- nil ends this timer for good. Nothing here runs on a schedule afterwards.
     return nil
 end
 
