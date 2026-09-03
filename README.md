@@ -1,2 +1,2 @@
 // Dev mode
-dofile("C:\\Users\\coryb\\Dev\\dcs_scripts\\leka_foothold\\hmd_enforcer.lua")
+dofile("C:\\Users\\coryb\\Dev\\custom_leka_foothold\\customizations.lua")
