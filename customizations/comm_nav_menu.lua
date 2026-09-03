@@ -39,7 +39,7 @@ local HPA_TO_MMHG = 0.7500615613030
 
 -- The Viggen's distance readout is in km until the number would get unwieldy,
 -- then switches to Swedish mil. Reported by the pilots who fly it here.
-local SEMIL_THRESHOLD_M = 50000
+local SEMIL_THRESHOLD_M = 40000
 
 -- Cells are separated by this and nothing else. There is no column padding:
 -- DCS renders these messages in a proportional font, so padding to a character
@@ -832,8 +832,7 @@ local function ReportLandingZones(groupId)
         for _, entry in ipairs(nearest) do
             local bearing, range = BearingRange(origin, entry.point)
 
-            lines[#lines + 1] = table.concat({FormatName(entry.name),
-                                              threatened[entry.key] and "HOT" or "SECURE",
+            lines[#lines + 1] = table.concat({FormatName(entry.name), threatened[entry.key] and "HOT" or "SECURE",
                                               FormatBearing(bearing, magVar), FormatDistance(range, profile),
                                               FormatPressure(entry.point, profile)}, CELL_SEPARATOR)
         end
