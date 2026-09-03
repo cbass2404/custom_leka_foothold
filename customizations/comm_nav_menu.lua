@@ -41,12 +41,12 @@ local HPA_TO_MMHG = 0.7500615613030
 -- then switches to Swedish mil. Reported by the pilots who fly it here.
 local SEMIL_THRESHOLD_M = 50000
 
--- Column widths, in displayed characters. The report is a pipe aligned table,
--- which only holds if every cell in a column is padded to the same width.
-local COL_NAME = 20
-local COL_STATUS = 6
-local COL_DIST = 9
-local COL_PRESS = 10
+-- Cells are separated by this and nothing else. There is no column padding:
+-- DCS renders these messages in a proportional font, so padding to a character
+-- count never lined the pipes up anyway, and it cost a row's whole width in
+-- whitespace to fail at it. A fixed separator reads the same at any name
+-- length, which is what matters when a long airfield name turns up.
+local CELL_SEPARATOR = "  |  "
 
 local function Log(logger, format, ...)
     logger(NAV_LOG_PREFIX .. string.format(format, ...))
@@ -133,17 +133,29 @@ end
 -- convert. Distance follows the airspeed indicator: knots pair with nautical
 -- miles, mph with statute miles, km/h with kilometres. Pressure is its own
 -- axis: US airframes read inHg, western European and Swedish read hPa, Soviet
--- read mmHg. So is the datum: NATO practice is QNH, Soviet practice and the
--- warbirds are QFE.
+-- read mmHg.
+--
+-- Datum picks which pressure gets sent, and only that one is sent: this is a
+-- readout a pilot takes in at a glance while flying, not a weather brief. It
+-- carries its own QNH or QFE label so the number cannot be mistaken for the
+-- other when it is read out or written down. NATO practice is QNH, Soviet
+-- practice and the warbirds QFE.
 --
 -- Helicopters are the exception to the distance rule: they always read
 -- kilometres, whatever their nation flies fixed wing in. Rotary crews plan,
 -- brief and call ranges in km, so NM in a Huey would be a conversion the pilot
--- has to undo. GetProfile enforces this for any helicopter, listed here or not.
+-- has to undo. That comes from the rotary entries below and nothing else.
 --
 -- Keyed on DCS type names, which match the ones in Foothold's CAREER_AIRCRAFT
 -- table. Init audits this against that table and logs anything missing, so a
 -- module ED adds shows up in dcs.log rather than silently reading as a Viper.
+-- Third party mods are the gap in that audit: Foothold does not list them, so
+-- nothing will tell you they are missing. Add them here by hand.
+--
+-- An unmatched type name gets DEFAULT_PROFILE unchanged. That is the whole
+-- fallback, deliberately: no guessing off the unit's category, no half matched
+-- profile assembled at runtime. A new module reads as a Viper until it is added
+-- here, which is a known quantity rather than a plausible looking invention.
 -- ============================================================================
 
 local PROFILE_US_JET = {
@@ -233,6 +245,19 @@ local airframe_profiles = {
     ["C-130J-30"] = PROFILE_US_JET,
     ["Hercules"] = PROFILE_US_JET,
     ["Bronco-OV-10A"] = PROFILE_US_JET,
+
+    -- Third party mods this mission allows. Grouped by what the audit can see
+    -- rather than by nation: none of these are in Foothold's CAREER_AIRCRAFT,
+    -- so AuditProfileCoverage will never flag one as missing however wrong it
+    -- reads. Keep this block in step with allowedPlanes by hand.
+    ["A-4E-C"] = PROFILE_US_JET,
+    -- Warsaw Pact instrumentation: metric, mmHg, QFE by practice.
+    ["L-39C"] = PROFILE_SOVIET,
+    ["SU22"] = PROFILE_SOVIET,
+    -- Western trainers. Knots and feet on the dials, millibar subscale.
+    ["C-101CC"] = PROFILE_EURO_JET,
+    ["MB-339A"] = PROFILE_EURO_JET,
+    ["MB-339APAN"] = PROFILE_EURO_JET,
 
     -- Western European jets. Knots and nautical miles, but millibars.
     ["M-2000C"] = PROFILE_EURO_JET,
@@ -330,49 +355,20 @@ local function IsHelicopter(unitObj)
     return false
 end
 
--- km variants of the fixed wing profiles, built once and reused. A helicopter
--- module released after this file was written is not in the table above and
--- would otherwise fall through to DEFAULT_PROFILE, which is nautical miles.
-local kilometreProfiles = {}
-
-local function AsKilometreProfile(profile)
-    if profile.dist == "km" then
-        return profile
-    end
-
-    local variant = kilometreProfiles[profile]
-
-    if not variant then
-        variant = {
-            dist = "km",
-            press = profile.press,
-            datum = profile.datum
-        }
-        kilometreProfiles[profile] = variant
-    end
-
-    return variant
-end
-
--- unitObj is optional: pass it wherever the unit is in hand, which is every
--- call site that reports a distance. Without it the type name alone decides,
--- which is right for the listed airframes and only misses an unlisted helo.
-local function GetProfile(typeName, unitObj)
-    local profile = airframe_profiles[typeName] or DEFAULT_PROFILE
-
-    -- Pressure and datum still come from the profile; only the unit is forced.
-    if unitObj and IsHelicopter(unitObj) then
-        return AsKilometreProfile(profile)
-    end
-
-    return profile
+-- One lookup, one fallback, no inference from the unit itself. A module that
+-- releases before this table catches up reads exactly as a Viper does, which is
+-- a known quantity a pilot can convert from, rather than a guess assembled from
+-- its category that looks authoritative and may not be.
+local function GetProfile(typeName)
+    return airframe_profiles[typeName] or DEFAULT_PROFILE
 end
 
 -- Foothold already keeps the definitive list of type names it supports. Diff
 -- against it once at load so a missing profile is a log line rather than a
--- pilot quietly reading inches of mercury in a Hind. A missing helicopter
--- still gets kilometres from GetProfile; it is the pressure and datum that
--- would be wrong, and only this audit would say so.
+-- pilot quietly reading inches of mercury in a Hind. A miss here gets the
+-- distance unit, the pressure unit and the datum wrong all at once, and only
+-- this audit would say so. It cannot see third party mods at all, since
+-- Foothold's list does not carry them.
 local function AuditProfileCoverage()
     local career = BattleCommander and BattleCommander.CAREER_AIRCRAFT
 
@@ -392,7 +388,7 @@ local function AuditProfileCoverage()
 
     if #missing > 0 then
         table.sort(missing)
-        Log(env.warning, "no unit profile for %d airframe(s), defaulting to NM/inHg/QNH (km if rotary): %s", #missing,
+        Log(env.warning, "no unit profile for %d airframe(s), defaulting to NM/inHg/QNH: %s", #missing,
             table.concat(missing, ", "))
     end
 end
@@ -401,34 +397,12 @@ end
 -- Formatting
 -- ============================================================================
 
--- Byte length lies about any string holding a degree sign, which is two bytes
--- in UTF-8. Counting non-continuation bytes gives the displayed width, and the
--- pipe alignment depends on getting this right.
-local function DisplayLength(text)
-    local _, count = tostring(text):gsub("[^\128-\191]", "")
-    return count
-end
-
-local function PadRight(text, width)
-    local pad = width - DisplayLength(text)
-    return pad > 0 and (text .. string.rep(" ", pad)) or text
-end
-
-local function PadLeft(text, width)
-    local pad = width - DisplayLength(text)
-    return pad > 0 and (string.rep(" ", pad) .. text) or text
-end
-
--- Zone and airbase names are ASCII in every setup file, so a byte trim is safe
--- and keeps the name column from pushing the row into a wrap.
-local function FitName(name, width)
-    name = tostring(name or "?"):upper()
-
-    if #name > width then
-        return name:sub(1, width - 1) .. "."
-    end
-
-    return PadRight(name, width)
+-- Upper case to match the rest of the report, and never nil: a zone that has
+-- lost its name should read as a question mark rather than crash the row it
+-- appears in. Names are printed at whatever length they are, since the cells
+-- are not padded to a width any more.
+local function FormatName(name)
+    return tostring(name or "?"):upper()
 end
 
 local function FormatDistance(metres, profile)
@@ -495,10 +469,16 @@ local function FormatMGRS(lat, lon)
 end
 
 -- QFE is the pressure the field actually sits in, QNH the same reduced to sea
--- level. Sampling the atmosphere at y=0 for QNH is what MOOSE's ATIS does, so
--- the model is known to extrapolate sensibly below terrain.
+-- level. One value, the one this airframe's crew actually sets, sampled at the
+-- height its datum implies. The label rides along with it so the number is not
+-- ambiguous when it gets read out on the radio or copied to a kneeboard, but
+-- there is only ever one number to take in.
+--
+-- Sampling the atmosphere at y=0 for QNH is what MOOSE's ATIS does, so the
+-- model is known to extrapolate sensibly below terrain.
 local function FormatPressure(vec3, profile)
-    local sampleHeight = profile.datum == "QFE" and (vec3.y or 0) or 0
+    local datum = profile.datum
+    local sampleHeight = datum == "QFE" and (vec3.y or 0) or 0
 
     local ok, _, pascals = pcall(atmosphere.getTemperatureAndPressure, {
         x = vec3.x,
@@ -507,26 +487,41 @@ local function FormatPressure(vec3, profile)
     })
 
     if not ok or not pascals then
-        return "--"
+        return datum .. " --"
     end
 
     local hPa = pascals / 100
 
     if profile.press == "inHg" then
-        return string.format("%.2f inHg", hPa * HPA_TO_INHG)
+        return string.format("%s %.2f inHg", datum, hPa * HPA_TO_INHG)
     elseif profile.press == "mmHg" then
-        return string.format("%.1f mmHg", hPa * HPA_TO_MMHG)
+        return string.format("%s %.1f mmHg", datum, hPa * HPA_TO_MMHG)
     end
 
-    return string.format("%.1f hPa", hPa)
+    return string.format("%s %.1f hPa", datum, hPa)
 end
 
 -- ============================================================================
 -- Geometry and group lookup
 -- ============================================================================
 
+-- Squared metres, for ranking only. Ordering by the square is the same ordering
+-- as by the distance, so nothing before the cut has to pay for a root or an
+-- arctangent. This is what every candidate gets.
+local function RangeSquared(from, to)
+    local dx = to.x - from.x
+    local dz = to.z - from.z
+
+    return dx * dx + dz * dz
+end
+
 -- DCS lays x to the north and z to the east, so this is a compass bearing
 -- straight out of atan2 with no axis swap needed.
+--
+-- Called only for the handful of entries that survive NearestFew and will
+-- actually be printed. atan2 is a real libm call, and running one per zone to
+-- then discard nine tenths of the answers is the kind of cost that does not
+-- show up with one player on the server and does with twenty.
 local function BearingRange(from, to)
     local dx = to.x - from.x
     local dz = to.z - from.z
@@ -761,8 +756,8 @@ end
 -- list reports so they cannot drift apart on ordering or count.
 local function NearestFew(candidates)
     table.sort(candidates, function(a, b)
-        if a.range ~= b.range then
-            return a.range < b.range
+        if a.rangeSq ~= b.rangeSq then
+            return a.rangeSq < b.rangeSq
         end
 
         return a.name < b.name
@@ -784,16 +779,17 @@ local function ReportLandingZones(groupId)
 
     local origin = unitObj:getPoint()
     local typeName = unitObj:getTypeName()
-    local profile = GetProfile(typeName, unitObj)
+    local profile = GetProfile(typeName)
     local magVar = GetMagVar(origin)
 
     -- A pad is a legal destination for anything that can hover onto it: the
     -- helicopters, and the Harrier, which is fixed wing but does not need a
     -- runway. Everyone else needs an airfield.
     local padCapable = IsHelicopter(unitObj) or typeName == "AV8BNA"
-    local threatened = BuildThreatenedZoneSet()
     local candidates = {}
 
+    -- Nothing here but the position lookup, which the ranking needs. Bearing,
+    -- distance and threat state are all resolved after the cut.
     for _, zone in ipairs(bc:getZones() or {}) do
         local usable = zone.facility == "airbase" or (padCapable and zone.facility == "farp")
 
@@ -801,13 +797,12 @@ local function ReportLandingZones(groupId)
             local point = GetZonePoint(zone)
 
             if point then
-                local bearing, range = BearingRange(origin, point)
-
                 candidates[#candidates + 1] = {
                     name = zone.airbaseName or zone.zone,
-                    status = threatened[zone.zone] and "HOT" or "SECURE",
-                    bearing = bearing,
-                    range = range,
+                    -- The threat set is keyed on the zone name, which is not
+                    -- the display name once an airbase has one.
+                    key = zone.zone,
+                    rangeSq = RangeSquared(origin, point),
                     point = point
                 }
             end
@@ -821,13 +816,21 @@ local function ReportLandingZones(groupId)
 
     if #nearest == 0 then
         lines[#lines + 1] = "NONE IN RANGE - NO FRIENDLY FIELD AVAILABLE"
-    end
+    else
+        -- Built here rather than before the loop above: it is a second walk of
+        -- every zone and every group commander on the map, and it exists to
+        -- answer at most navMenuResultCount membership questions. No candidates
+        -- means it never runs at all.
+        local threatened = BuildThreatenedZoneSet()
 
-    for _, entry in ipairs(nearest) do
-        lines[#lines + 1] = table.concat({FitName(entry.name, COL_NAME), PadRight(entry.status, COL_STATUS),
-                                          FormatBearing(entry.bearing, magVar),
-                                          PadLeft(FormatDistance(entry.range, profile), COL_DIST),
-                                          PadLeft(FormatPressure(entry.point, profile), COL_PRESS)}, " | ")
+        for _, entry in ipairs(nearest) do
+            local bearing, range = BearingRange(origin, entry.point)
+
+            lines[#lines + 1] = table.concat({FormatName(entry.name),
+                                              threatened[entry.key] and "HOT" or "SECURE",
+                                              FormatBearing(bearing, magVar), FormatDistance(range, profile),
+                                              FormatPressure(entry.point, profile)}, CELL_SEPARATOR)
+        end
     end
 
     trigger.action.outTextForGroup(groupId, table.concat(lines, "\n"), navMenuDisplayTime)
@@ -860,7 +863,7 @@ local function ReportObjectives(groupId)
     end
 
     local origin = unitObj:getPoint()
-    local profile = GetProfile(unitObj:getTypeName(), unitObj)
+    local profile = GetProfile(unitObj:getTypeName())
     local magVar = GetMagVar(origin)
     local candidates = {}
 
@@ -869,13 +872,9 @@ local function ReportObjectives(groupId)
             local point = GetZonePoint(zone)
 
             if point then
-                local bearing, range = BearingRange(origin, point)
-
                 candidates[#candidates + 1] = {
                     name = zone.zone,
-                    status = ObjectiveStatus(zone),
-                    bearing = bearing,
-                    range = range,
+                    rangeSq = RangeSquared(origin, point),
                     point = point,
                     zone = zone
                 }
@@ -889,14 +888,18 @@ local function ReportObjectives(groupId)
 
     if #nearest == 0 then
         lines[#lines + 1] = "NO KNOWN ENEMY OBJECTIVES"
-    end
+    else
+        -- ObjectiveStatus and DescribeDefences are the expensive pair here: one
+        -- calls into Frontline, the other walks every built group in the zone
+        -- and every unit in it. Both run only on the rows being printed.
+        for _, entry in ipairs(nearest) do
+            local bearing, range = BearingRange(origin, entry.point)
 
-    for _, entry in ipairs(nearest) do
-        lines[#lines + 1] = table.concat({FitName(entry.name, COL_NAME), PadRight(entry.status, COL_STATUS),
-                                          FormatBearing(entry.bearing, magVar),
-                                          PadLeft(FormatDistance(entry.range, profile), COL_DIST),
-                                          PadLeft(FormatPressure(entry.point, profile), COL_PRESS),
-                                          DescribeDefences(entry.zone)}, " | ")
+            lines[#lines + 1] = table.concat({FormatName(entry.name), ObjectiveStatus(entry.zone),
+                                              FormatBearing(bearing, magVar), FormatDistance(range, profile),
+                                              FormatPressure(entry.point, profile), DescribeDefences(entry.zone)},
+                CELL_SEPARATOR)
+        end
     end
 
     trigger.action.outTextForGroup(groupId, table.concat(lines, "\n"), navMenuDisplayTime)
