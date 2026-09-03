@@ -1,4 +1,3 @@
-local navControllerCallsign = NavControllerCallsign or "MAGIC"
 local navMenuEnabled = NavMenuEnabled ~= false
 local navMenuResultCount = NavMenuResultCount or 5
 local navMenuDisplayTime = NavMenuDisplayTime or 30
@@ -143,13 +142,41 @@ end
 -- module ED adds shows up in dcs.log rather than silently reading as a Viper.
 -- ============================================================================
 
-local PROFILE_US_JET = { dist = "NM", press = "inHg", datum = "QNH" }
-local PROFILE_EURO_JET = { dist = "NM", press = "hPa", datum = "QNH" }
-local PROFILE_SOVIET = { dist = "km", press = "mmHg", datum = "QFE" }
-local PROFILE_US_PROP = { dist = "SM", press = "inHg", datum = "QFE" }
-local PROFILE_UK_PROP = { dist = "SM", press = "hPa", datum = "QFE" }
-local PROFILE_DE_PROP = { dist = "km", press = "hPa", datum = "QFE" }
-local PROFILE_VIGGEN = { dist = "SEmil", press = "hPa", datum = "QFE" }
+local PROFILE_US_JET = {
+    dist = "NM",
+    press = "inHg",
+    datum = "QNH"
+}
+local PROFILE_EURO_JET = {
+    dist = "NM",
+    press = "hPa",
+    datum = "QNH"
+}
+local PROFILE_SOVIET = {
+    dist = "km",
+    press = "mmHg",
+    datum = "QFE"
+}
+local PROFILE_US_PROP = {
+    dist = "SM",
+    press = "inHg",
+    datum = "QFE"
+}
+local PROFILE_UK_PROP = {
+    dist = "SM",
+    press = "hPa",
+    datum = "QFE"
+}
+local PROFILE_DE_PROP = {
+    dist = "km",
+    press = "hPa",
+    datum = "QFE"
+}
+local PROFILE_VIGGEN = {
+    dist = "SEmil",
+    press = "hPa",
+    datum = "QFE"
+}
 
 local DEFAULT_PROFILE = PROFILE_US_JET
 
@@ -295,8 +322,8 @@ local function AuditProfileCoverage()
 
     if #missing > 0 then
         table.sort(missing)
-        Log(env.warning, "no unit profile for %d airframe(s), defaulting to NM/inHg/QNH: %s",
-            #missing, table.concat(missing, ", "))
+        Log(env.warning, "no unit profile for %d airframe(s), defaulting to NM/inHg/QNH: %s", #missing,
+            table.concat(missing, ", "))
     end
 end
 
@@ -393,9 +420,7 @@ local function FormatMGRS(lat, lon)
 
     -- Four digit easting and northing, so 10 m precision. Enough to fly to and
     -- short enough to copy onto a kneeboard in the air.
-    return string.format("%s %s %04d %04d",
-        mgrs.UTMZone, mgrs.MGRSDigraph,
-        math.floor((mgrs.Easting or 0) / 10),
+    return string.format("%s %s %04d %04d", mgrs.UTMZone, mgrs.MGRSDigraph, math.floor((mgrs.Easting or 0) / 10),
         math.floor((mgrs.Northing or 0) / 10))
 end
 
@@ -405,8 +430,11 @@ end
 local function FormatPressure(vec3, profile)
     local sampleHeight = profile.datum == "QFE" and (vec3.y or 0) or 0
 
-    local ok, _, pascals = pcall(atmosphere.getTemperatureAndPressure,
-        { x = vec3.x, y = sampleHeight, z = vec3.z })
+    local ok, _, pascals = pcall(atmosphere.getTemperatureAndPressure, {
+        x = vec3.x,
+        y = sampleHeight,
+        z = vec3.z
+    })
 
     if not ok or not pascals then
         return "--"
@@ -492,7 +520,14 @@ local function GetZonePoint(zone)
 
     if ok and triggerZone and triggerZone.point then
         local point = triggerZone.point
-        return { x = point.x, y = land.getHeight({ x = point.x, y = point.z }) or 0, z = point.z }
+        return {
+            x = point.x,
+            y = land.getHeight({
+                x = point.x,
+                y = point.z
+            }) or 0,
+            z = point.z
+        }
     end
 end
 
@@ -525,10 +560,8 @@ local function BuildThreatenedZoneSet()
         end
 
         for _, groupCommander in ipairs(zone.groups or {}) do
-            if groupCommander.side == coalition.side.RED
-                and groupCommander.mission == "attack"
-                and groupCommander.targetzone
-                and ACTIVE_GROUP_STATES[groupCommander.state] == true then
+            if groupCommander.side == coalition.side.RED and groupCommander.mission == "attack" and
+                groupCommander.targetzone and ACTIVE_GROUP_STATES[groupCommander.state] == true then
                 threatened[groupCommander.targetzone] = true
             end
         end
@@ -548,15 +581,28 @@ end
 --
 -- Ordered most dangerous first and capped, because this is the last column on
 -- an already wide row and a full order of battle would wrap it.
-local DEFENCE_CATEGORIES = {
-    { label = "SAM", attributes = { "LR SAM", "MR SAM" } },
-    { label = "SHORAD", attributes = { "SR SAM", "MANPADS" } },
-    { label = "AAA", attributes = { "AAA" } },
-    { label = "EWR", attributes = { "EWR" } },
-    { label = "ARMOR", attributes = { "Tanks", "IFV", "APC" } },
-    { label = "ARTY", attributes = { "Artillery" } },
-    { label = "TROOPS", attributes = { "Infantry" } }
-}
+local DEFENCE_CATEGORIES = {{
+    label = "SAM",
+    attributes = {"LR SAM", "MR SAM"}
+}, {
+    label = "SHORAD",
+    attributes = {"SR SAM", "MANPADS"}
+}, {
+    label = "AAA",
+    attributes = {"AAA"}
+}, {
+    label = "EWR",
+    attributes = {"EWR"}
+}, {
+    label = "ARMOR",
+    attributes = {"Tanks", "IFV", "APC"}
+}, {
+    label = "ARTY",
+    attributes = {"Artillery"}
+}, {
+    label = "TROOPS",
+    attributes = {"Infantry"}
+}}
 
 local DEFENCE_LABEL_LIMIT = 3
 
@@ -608,7 +654,7 @@ end
 -- ============================================================================
 
 local function ReportHeader()
-    return string.format("--- %s | TACTICAL NAVIGATION LOG ---", navControllerCallsign)
+    return "--- TACTICAL NAVIGATION LOG ---"
 end
 
 local function VariationHeaderLine(magVar)
@@ -628,7 +674,7 @@ local function ReportVariation(groupId)
 
     local point = unitObj:getPoint()
     local magVar = GetMagVar(point)
-    local lines = { ReportHeader(), "" }
+    local lines = {ReportHeader(), ""}
 
     local ok, lat, lon = pcall(coord.LOtoLL, point)
 
@@ -708,13 +754,8 @@ local function ReportLandingZones(groupId)
         end
     end
 
-    local lines = {
-        ReportHeader(),
-        "",
-        VariationHeaderLine(magVar),
-        "",
-        padCapable and "CLOSEST FRIENDLY LANDING ZONES:" or "CLOSEST FRIENDLY AIRFIELDS:"
-    }
+    local lines = {ReportHeader(), "", VariationHeaderLine(magVar), "",
+                   padCapable and "CLOSEST FRIENDLY LANDING ZONES:" or "CLOSEST FRIENDLY AIRFIELDS:"}
 
     local nearest = NearestFew(candidates)
 
@@ -723,13 +764,10 @@ local function ReportLandingZones(groupId)
     end
 
     for _, entry in ipairs(nearest) do
-        lines[#lines + 1] = table.concat({
-            FitName(entry.name, COL_NAME),
-            PadRight(entry.status, COL_STATUS),
-            FormatBearing(entry.bearing, magVar),
-            PadLeft(FormatDistance(entry.range, profile), COL_DIST),
-            PadLeft(FormatPressure(entry.point, profile), COL_PRESS)
-        }, " | ")
+        lines[#lines + 1] = table.concat({FitName(entry.name, COL_NAME), PadRight(entry.status, COL_STATUS),
+                                          FormatBearing(entry.bearing, magVar),
+                                          PadLeft(FormatDistance(entry.range, profile), COL_DIST),
+                                          PadLeft(FormatPressure(entry.point, profile), COL_PRESS)}, " | ")
     end
 
     trigger.action.outTextForGroup(groupId, table.concat(lines, "\n"), navMenuDisplayTime)
@@ -785,13 +823,7 @@ local function ReportObjectives(groupId)
         end
     end
 
-    local lines = {
-        ReportHeader(),
-        "",
-        VariationHeaderLine(magVar),
-        "",
-        "CLOSEST OBJECTIVES:"
-    }
+    local lines = {ReportHeader(), "", VariationHeaderLine(magVar), "", "CLOSEST OBJECTIVES:"}
 
     local nearest = NearestFew(candidates)
 
@@ -800,14 +832,11 @@ local function ReportObjectives(groupId)
     end
 
     for _, entry in ipairs(nearest) do
-        lines[#lines + 1] = table.concat({
-            FitName(entry.name, COL_NAME),
-            PadRight(entry.status, COL_STATUS),
-            FormatBearing(entry.bearing, magVar),
-            PadLeft(FormatDistance(entry.range, profile), COL_DIST),
-            PadLeft(FormatPressure(entry.point, profile), COL_PRESS),
-            DescribeDefences(entry.zone)
-        }, " | ")
+        lines[#lines + 1] = table.concat({FitName(entry.name, COL_NAME), PadRight(entry.status, COL_STATUS),
+                                          FormatBearing(entry.bearing, magVar),
+                                          PadLeft(FormatDistance(entry.range, profile), COL_DIST),
+                                          PadLeft(FormatPressure(entry.point, profile), COL_PRESS),
+                                          DescribeDefences(entry.zone)}, " | ")
     end
 
     trigger.action.outTextForGroup(groupId, table.concat(lines, "\n"), navMenuDisplayTime)
@@ -843,12 +872,18 @@ end
 local function AddNavMenu(groupId)
     local root = missionCommands.addSubMenuForGroup(groupId, NAV_MENU_TITLE)
 
-    missionCommands.addCommandForGroup(groupId, "Get Magnetic Variation", root,
-        SafeReport, { reporter = ReportVariation, groupId = groupId })
-    missionCommands.addCommandForGroup(groupId, "Get Friendly Landing Zones", root,
-        SafeReport, { reporter = ReportLandingZones, groupId = groupId })
-    missionCommands.addCommandForGroup(groupId, "Get Nearest Objectives", root,
-        SafeReport, { reporter = ReportObjectives, groupId = groupId })
+    missionCommands.addCommandForGroup(groupId, "Get Magnetic Variation", root, SafeReport, {
+        reporter = ReportVariation,
+        groupId = groupId
+    })
+    missionCommands.addCommandForGroup(groupId, "Get Friendly Landing Zones", root, SafeReport, {
+        reporter = ReportLandingZones,
+        groupId = groupId
+    })
+    missionCommands.addCommandForGroup(groupId, "Get Nearest Objectives", root, SafeReport, {
+        reporter = ReportObjectives,
+        groupId = groupId
+    })
 
     nav_menus[groupId] = root
 end
@@ -911,8 +946,7 @@ local function Arm(_, time)
     InitMagvar()
     AuditProfileCoverage()
 
-    Log(env.info, "armed as '%s', %d results per report, %ds sweep.",
-        navControllerCallsign, navMenuResultCount, navMenuSweepSeconds)
+    Log(env.info, "%d results per report, %ds sweep.", navMenuResultCount, navMenuSweepSeconds)
 
     timer.scheduleFunction(SweepNavMenus, nil, time + 1)
 
