@@ -1,5 +1,4 @@
 .git
-./Lekas-Foothold/**/*
+Lekas-Foothold
 *copy*
-Foothold
 *customizations.lua
