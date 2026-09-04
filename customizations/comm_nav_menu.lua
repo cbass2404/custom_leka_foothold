@@ -556,6 +556,25 @@ local function ZoneIsVisible(zone)
     return zone and zone.active and not zone.suspended and not zone.isHidden
 end
 
+-- A red zone is an objective outright. A neutral one is an objective when it has
+-- been in the fight at some point: clearing a zone drops it to neutral and it
+-- then sits there waiting on troops, which is the moment it most needs to be on
+-- the list, and dropping it the instant the last defender died was exactly the
+-- wrong behaviour.
+--
+-- The second test is Foothold's own, lifted from its neutral_capture_targets
+-- bucket in zoneCommanderv2. Zones that start neutral and have never been taken
+-- by red are dormant map furniture rather than campaign objectives, so they stay
+-- off the list until red has held one. Popup zones set both NeutralAtStart and
+-- isHidden while dormant, so they are excluded twice over.
+local function ZoneIsObjective(zone)
+    if zone.side == coalition.side.RED then
+        return true
+    end
+
+    return zone.side == coalition.side.NEUTRAL and (not zone.NeutralAtStart or zone.firstCaptureByRed)
+end
+
 -- The landing surface, not the trigger zone's centre, and read live so a moving
 -- object is not reported where it was at mission start.
 local function GetZonePoint(zone)
@@ -846,7 +865,16 @@ end
 -- what is out there as well as what can be hit today. Frontline is Foothold's
 -- and may not have indexed a zone, in which case the column says so rather than
 -- guessing REAR and implying the zone is quiet.
+--
+-- OPEN short circuits all of that. A neutral zone has already been cleared and
+-- is waiting on troops, so where it sits relative to the front is not the thing
+-- the pilot needs off this row, and FRONT or REAR against it would read as red
+-- still holding it.
 local function ObjectiveStatus(zone)
+    if zone.side == coalition.side.NEUTRAL then
+        return "OPEN"
+    end
+
     if not Frontline or not Frontline.ZoneDistToFrontNm then
         return "RED"
     end
@@ -873,7 +901,7 @@ local function ReportObjectives(groupId)
     local candidates = {}
 
     for _, zone in ipairs(bc:getZones() or {}) do
-        if zone.side == coalition.side.RED and ZoneIsVisible(zone) then
+        if ZoneIsObjective(zone) and ZoneIsVisible(zone) then
             local point = GetZonePoint(zone)
 
             if point then
@@ -892,7 +920,7 @@ local function ReportObjectives(groupId)
     local nearest = NearestFew(candidates)
 
     if #nearest == 0 then
-        lines[#lines + 1] = "NO KNOWN ENEMY OBJECTIVES"
+        lines[#lines + 1] = "NO KNOWN OBJECTIVES"
     else
         -- ObjectiveStatus and DescribeDefences are the expensive pair here: one
         -- calls into Frontline, the other walks every built group in the zone

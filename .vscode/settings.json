@@ -1,5 +1,24 @@
 {
-  "Lua.workspace.library": ["../dcs_script_library"],
+  // Individual files rather than the directories they sit in. "Common Scripts"
+  // is 14 MB, almost all of it Moose and Foothold_Localization, which nothing
+  // here touches; "Setup files" holds ten setups that each assign the same
+  // globals with different values, and only the Coldwar one matches our mission.
+  // zoneCommanderv2 defines BattleCommander, ZoneCommander and Frontline;
+  // COLDWAR_SETUP defines bc.
+  //
+  // Foothold is a nested git repo, so ignoreSubmodules and useGitIgnore both
+  // keep the workspace scan out of it. Naming the files here is what gets them
+  // read at all.
+  "Lua.workspace.library": [
+    "../dcs_script_library",
+    "Lekas-Foothold/Common Scripts/zoneCommanderv2.lua",
+    "Lekas-Foothold/Setup files/COLDWAR_SETUP.lua"
+  ],
+
+  // zoneCommanderv2 is 3.2 MB and the default cap is 500 KB, which would skip
+  // the one file that defines the types we care about.
+  "Lua.workspace.preloadFileSize": 4000,
+
   "Lua.diagnostics.disable": ["deprecated"],
   "Lua.runtime.version": "Lua 5.1"
 }

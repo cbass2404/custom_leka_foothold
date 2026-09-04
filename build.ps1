@@ -35,9 +35,15 @@
 .PARAMETER NoWw2
     Skip the WW2 bundle and build only the full one.
 
+.PARAMETER SkipUpstreamCheck
+    Build without first running check-upstream.ps1. The check is the gate that
+    catches a Foothold re-pull having renamed something customizations/ reads,
+    so skipping it can ship a bundle that loads cleanly and then does nothing.
+    Intended for working on a bundle while a known upstream break is unfixed.
+
 .EXAMPLE
     .\build.ps1
-    Builds both bundles.
+    Runs the upstream contract check, then builds both bundles.
 
 .EXAMPLE
     .\build.ps1 -Exclude hmd_enforcer
@@ -53,7 +59,8 @@ param(
     [string]   $SourceDir,
     [string]   $OutFile,
     [string]   $Ww2OutFile,
-    [switch]   $NoWw2
+    [switch]   $NoWw2,
+    [switch]   $SkipUpstreamCheck
 )
 
 $ErrorActionPreference = 'Stop'
@@ -68,6 +75,38 @@ $Ww2Sources = @(
 )
 
 $root = $PSScriptRoot
+
+# --------------------------------------------------------------------------
+# Upstream contract gate.
+#
+# Runs before anything is compiled. Lekas-Foothold is re-pulled after every
+# upstream release, and a rename there does not break the build or the load:
+# the bundle compiles, the mission starts, and a report quietly comes out empty
+# on the server. Checking here means the failure lands on this machine, at the
+# moment of building, rather than in front of pilots.
+#
+# Quiet, so a passing check costs one line and stays out of the build output.
+# --------------------------------------------------------------------------
+if (-not $SkipUpstreamCheck) {
+    $checkScript = Join-Path $root 'check-upstream.ps1'
+
+    if (-not (Test-Path -LiteralPath $checkScript)) {
+        throw "Upstream check not found: $checkScript (use -SkipUpstreamCheck to build anyway)"
+    }
+
+    & $checkScript -Quiet
+
+    # The check prints its own report. Adding a PowerShell error record on top
+    # would bury it, so this just says how to proceed and stops.
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'Build stopped: upstream contract check failed.' -ForegroundColor Red
+        Write-Host 'Run .\check-upstream.ps1 for the full report, or .\build.ps1 -SkipUpstreamCheck to build regardless.'
+        exit 1
+    }
+
+    Write-Host 'Upstream contract check passed.' -ForegroundColor Green
+}
+
 if (-not $SourceDir)  { $SourceDir  = Join-Path $root 'customizations' }
 if (-not $OutFile)    { $OutFile    = Join-Path $root 'customizations.lua' }
 if (-not $Ww2OutFile) { $Ww2OutFile = Join-Path $root 'ww2_customizations.lua' }
@@ -193,3 +232,8 @@ if (-not $NoWw2) {
             -Selection 'WW2 subset (see $Ww2Sources in build.ps1)'
     }
 }
+
+# Explicit, because the upstream gate above exits 1 on failure and that makes
+# this script's exit code meaningful. Without it a successful build leaves
+# $LASTEXITCODE at whatever the previous command set, which reads as a failure.
+exit 0
