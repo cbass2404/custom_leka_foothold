@@ -1,7 +1,7 @@
 local navMenuEnabled = NavMenuEnabled ~= false
 local navMenuResultCount = NavMenuResultCount or 5
 local navMenuDisplayTime = NavMenuDisplayTime or 30
--- A red zone this close to the front line is reported FRONT rather than REAR.
+-- An enemy zone this close to the front line is reported FRONT rather than REAR.
 local navFrontlineThresholdNm = NavFrontlineThresholdNm or 15
 
 -- ============================================================================
@@ -13,11 +13,16 @@ local navFrontlineThresholdNm = NavFrontlineThresholdNm or 15
 --
 --   Get Magnetic Variation    variation at the aircraft's own position
 --   Get Friendly Landing Zones  nearest fields this airframe can actually use
---   Get Nearest Objectives    nearest red zones, with what is waiting there
+--   Get Nearest Objectives    nearest enemy zones, with what is waiting there
 --
 -- Menus are per group and DCS gives the callback no way to tell which seat
 -- pressed the key, so a group is the finest scope available. On this server
 -- that is also a player: the slots are dynamic spawns, one group each.
+--
+-- Either coalition can fly this mission in PvP, so nothing below assumes the
+-- pilot is blue. The side is captured when the menu is built and every report
+-- is answered from that side's point of view: its own fields to land at, the
+-- other side's zones as objectives.
 --
 -- Deliberately built on stock DCS API rather than Foothold's internals wherever
 -- there was a choice. Lekas-Foothold is vendored and re-pulled after every
@@ -529,11 +534,17 @@ local function BearingRange(from, to)
     return math.deg(math.atan2(dz, dx)) % 360, math.sqrt(dx * dx + dz * dz)
 end
 
+local function EnemyOf(side)
+    return side == coalition.side.RED and coalition.side.BLUE or coalition.side.RED
+end
+
 -- Resolved at press time rather than captured when the menu was built: with
 -- dynamic spawns the unit behind a group id is replaced on every re-slot, and a
 -- stale reference would report a position the pilot left ten minutes ago.
-local function GetRequestingUnit(groupId)
-    for _, unitObj in pairs(coalition.getPlayers(coalition.side.BLUE) or {}) do
+-- Only the asking side's players are walked, which is also the only side the
+-- group can belong to.
+local function GetRequestingUnit(groupId, side)
+    for _, unitObj in pairs(coalition.getPlayers(side) or {}) do
         if unitObj and unitObj:isExist() then
             local groupObj = unitObj:getGroup()
 
@@ -556,19 +567,21 @@ local function ZoneIsVisible(zone)
     return zone and zone.active and not zone.suspended and not zone.isHidden
 end
 
--- A red zone is an objective outright. A neutral one is an objective when it has
--- been in the fight at some point: clearing a zone drops it to neutral and it
--- then sits there waiting on troops, which is the moment it most needs to be on
--- the list, and dropping it the instant the last defender died was exactly the
--- wrong behaviour.
+-- An enemy zone is an objective outright. A neutral one is an objective when it
+-- has been in the fight at some point: clearing a zone drops it to neutral and
+-- it then sits there waiting on troops, which is the moment it most needs to be
+-- on the list, and dropping it the instant the last defender died was exactly
+-- the wrong behaviour.
 --
 -- The second test is Foothold's own, lifted from its neutral_capture_targets
--- bucket in zoneCommanderv2. Zones that start neutral and have never been taken
--- by red are dormant map furniture rather than campaign objectives, so they stay
--- off the list until red has held one. Popup zones set both NeutralAtStart and
--- isHidden while dormant, so they are excluded twice over.
-local function ZoneIsObjective(zone)
-    if zone.side == coalition.side.RED then
+-- bucket in zoneCommanderv2. Zones that start neutral and have never been held
+-- are dormant map furniture rather than campaign objectives, so they stay off
+-- the list until someone has held one. Despite the name, firstCaptureByRed is
+-- set by a capture from either side, and Foothold's own PvP menus use it that
+-- way for both coalitions. Popup zones set both NeutralAtStart and isHidden
+-- while dormant, so they are excluded twice over.
+local function ZoneIsObjective(zone, side)
+    if zone.side == EnemyOf(side) then
         return true
     end
 
@@ -605,15 +618,18 @@ local function GetZonePoint(zone)
     end
 end
 
--- Every blue zone with red forces committed against it, built in one pass so
--- the airfield report does not walk the whole order of battle once per field.
+-- Every zone with the given side's enemy committed against it, built in one
+-- pass so the airfield report does not walk the whole order of battle once per
+-- field.
 --
--- Three signals, any one of which is enough. pendingCapture means red is on the
--- field running the capture clock. A red attack GroupCommander pointed at the
--- zone and out of the hangar means red is on the way, which is what a pilot
--- picking a divert actually needs to know. _zoneAttackFlashes is private and
--- only ever populated by mission editor triggers, so it is read defensively and
--- treated as a bonus rather than depended on.
+-- Three signals, any one of which is enough. pendingCapture means the enemy is
+-- on the field running the capture clock. An enemy attack GroupCommander
+-- pointed at the zone and out of the hangar means the enemy is on the way,
+-- which is what a pilot picking a divert actually needs to know.
+-- _zoneAttackFlashes is private and only ever populated by mission editor
+-- triggers, so it is read defensively and treated as a bonus rather than
+-- depended on. Foothold only ever flashes blue zones under attack, so it means
+-- nothing to a red pilot and is read for blue alone.
 local ACTIVE_GROUP_STATES = {
     preparing = true,
     takeoff = true,
@@ -623,26 +639,29 @@ local ACTIVE_GROUP_STATES = {
     atdestination = true
 }
 
-local function BuildThreatenedZoneSet()
+local function BuildThreatenedZoneSet(side)
+    local enemy = EnemyOf(side)
     local threatened = {}
 
     for _, zone in ipairs(bc:getZones() or {}) do
         local pending = zone.pendingCapture
 
-        if pending and pending.side == coalition.side.RED then
+        if pending and pending.side == enemy then
             threatened[zone.zone] = true
         end
 
         for _, groupCommander in ipairs(zone.groups or {}) do
-            if groupCommander.side == coalition.side.RED and groupCommander.mission == "attack" and
-                groupCommander.targetzone and ACTIVE_GROUP_STATES[groupCommander.state] == true then
+            if groupCommander.side == enemy and groupCommander.mission == "attack" and groupCommander.targetzone and
+                ACTIVE_GROUP_STATES[groupCommander.state] == true then
                 threatened[groupCommander.targetzone] = true
             end
         end
     end
 
-    for zoneName in pairs(bc._zoneAttackFlashes or {}) do
-        threatened[zoneName] = true
+    if side == coalition.side.BLUE then
+        for zoneName in pairs(bc._zoneAttackFlashes or {}) do
+            threatened[zoneName] = true
+        end
     end
 
     return threatened
@@ -745,8 +764,8 @@ local function VariationHeaderLine(magVar)
     return string.format("COMPASS VARIATION: %+.1f\194\176", magVar)
 end
 
-local function ReportVariation(groupId)
-    local unitObj = GetRequestingUnit(groupId)
+local function ReportVariation(groupId, side)
+    local unitObj = GetRequestingUnit(groupId, side)
 
     if not unitObj then
         return
@@ -795,8 +814,8 @@ local function NearestFew(candidates)
     return candidates
 end
 
-local function ReportLandingZones(groupId)
-    local unitObj = GetRequestingUnit(groupId)
+local function ReportLandingZones(groupId, side)
+    local unitObj = GetRequestingUnit(groupId, side)
 
     if not unitObj then
         return
@@ -818,7 +837,7 @@ local function ReportLandingZones(groupId)
     for _, zone in ipairs(bc:getZones() or {}) do
         local usable = zone.facility == "airbase" or (padCapable and zone.facility == "farp")
 
-        if usable and zone.side == coalition.side.BLUE and ZoneIsVisible(zone) then
+        if usable and zone.side == side and ZoneIsVisible(zone) then
             local point = GetZonePoint(zone)
 
             if point then
@@ -846,7 +865,7 @@ local function ReportLandingZones(groupId)
         -- every zone and every group commander on the map, and it exists to
         -- answer at most navMenuResultCount membership questions. No candidates
         -- means it never runs at all.
-        local threatened = BuildThreatenedZoneSet()
+        local threatened = BuildThreatenedZoneSet(side)
 
         for _, entry in ipairs(nearest) do
             local bearing, range = BearingRange(origin, entry.point)
@@ -860,23 +879,27 @@ local function ReportLandingZones(groupId)
     trigger.action.outTextForGroup(groupId, table.concat(lines, "\n"), navMenuDisplayTime)
 end
 
--- FRONT means red holds it and the fighting has reached it, REAR means it is
--- behind their lines and not yet reachable. Both are listed: a controller says
--- what is out there as well as what can be hit today. Frontline is Foothold's
--- and may not have indexed a zone, in which case the column says so rather than
--- guessing REAR and implying the zone is quiet.
+-- FRONT means the enemy holds it and the fighting has reached it, REAR means it
+-- is behind their lines and not yet reachable. Both are listed: a controller
+-- says what is out there as well as what can be hit today. Frontline is
+-- Foothold's and may not have indexed a zone, in which case the column says so
+-- rather than guessing REAR and implying the zone is quiet.
+--
+-- Frontline's distance is signed, positive into red territory, so it reads
+-- correctly for a blue pilot as is and is negated for a red one. That is the
+-- same flip Foothold applies to its own red attack missions in PvP.
 --
 -- OPEN short circuits all of that. A neutral zone has already been cleared and
 -- is waiting on troops, so where it sits relative to the front is not the thing
--- the pilot needs off this row, and FRONT or REAR against it would read as red
--- still holding it.
-local function ObjectiveStatus(zone)
+-- the pilot needs off this row, and FRONT or REAR against it would read as the
+-- enemy still holding it.
+local function ObjectiveStatus(zone, side)
     if zone.side == coalition.side.NEUTRAL then
         return "OPEN"
     end
 
     if not Frontline or not Frontline.ZoneDistToFrontNm then
-        return "RED"
+        return zone.side == coalition.side.RED and "RED" or "BLUE"
     end
 
     local ok, distance = pcall(Frontline.ZoneDistToFrontNm, zone.zone)
@@ -885,11 +908,15 @@ local function ObjectiveStatus(zone)
         return "?"
     end
 
+    if side == coalition.side.RED then
+        distance = -distance
+    end
+
     return distance <= navFrontlineThresholdNm and "FRONT" or "REAR"
 end
 
-local function ReportObjectives(groupId)
-    local unitObj = GetRequestingUnit(groupId)
+local function ReportObjectives(groupId, side)
+    local unitObj = GetRequestingUnit(groupId, side)
 
     if not unitObj then
         return
@@ -901,7 +928,7 @@ local function ReportObjectives(groupId)
     local candidates = {}
 
     for _, zone in ipairs(bc:getZones() or {}) do
-        if ZoneIsObjective(zone) and ZoneIsVisible(zone) then
+        if ZoneIsObjective(zone, side) and ZoneIsVisible(zone) then
             local point = GetZonePoint(zone)
 
             if point then
@@ -928,7 +955,7 @@ local function ReportObjectives(groupId)
         for _, entry in ipairs(nearest) do
             local bearing, range = BearingRange(origin, entry.point)
 
-            lines[#lines + 1] = table.concat({FormatName(entry.name), ObjectiveStatus(entry.zone),
+            lines[#lines + 1] = table.concat({FormatName(entry.name), ObjectiveStatus(entry.zone, side),
                                               FormatBearing(bearing, magVar), FormatDistance(range, profile),
                                               FormatPressure(entry.point, profile), DescribeDefences(entry.zone)},
                 CELL_SEPARATOR)
@@ -959,10 +986,11 @@ local nav_menus = {}
 -- A report that throws must not take the scheduler or the menu down with it.
 --
 -- addCommandForGroup forwards exactly one argument to the handler, so the
--- reporter and the group id travel together in a table. Passing them as two
--- arguments silently drops the second and the report answers nobody.
+-- reporter, the group id and the side travel together in a table. Passing them
+-- as separate arguments silently drops all but the first and the report answers
+-- nobody.
 local function SafeReport(call)
-    local ok, err = pcall(call.reporter, call.groupId)
+    local ok, err = pcall(call.reporter, call.groupId, call.side)
 
     if not ok then
         Log(env.error, "%s", tostring(err))
@@ -970,20 +998,23 @@ local function SafeReport(call)
     end
 end
 
-local function AddNavMenu(groupId)
+local function AddNavMenu(groupId, side)
     local root = missionCommands.addSubMenuForGroup(groupId, NAV_MENU_TITLE)
 
     missionCommands.addCommandForGroup(groupId, "Get Magnetic Variation", root, SafeReport, {
         reporter = ReportVariation,
-        groupId = groupId
+        groupId = groupId,
+        side = side
     })
     missionCommands.addCommandForGroup(groupId, "Get Friendly Landing Zones", root, SafeReport, {
         reporter = ReportLandingZones,
-        groupId = groupId
+        groupId = groupId,
+        side = side
     })
     missionCommands.addCommandForGroup(groupId, "Get Nearest Objectives", root, SafeReport, {
         reporter = ReportObjectives,
-        groupId = groupId
+        groupId = groupId,
+        side = side
     })
 
     nav_menus[groupId] = root
@@ -993,15 +1024,25 @@ end
 -- as dynamic spawns come and go, so a record left behind by a previous owner
 -- would make us skip a group that has no menu at all. Removing first also means
 -- BIRTH and PLAYER_ENTER_UNIT both firing for one slotting cannot leave two
--- Navigation submenus stacked on the pilot's F10.
-local function InstallNavMenu(groupId)
+-- Navigation submenus stacked on the pilot's F10. The same rebuild is what keeps
+-- the captured side honest: a reused group id can change coalition between
+-- owners, and the new owner's slotting replaces the old side with theirs.
+local function InstallNavMenu(groupId, side)
     if nav_menus[groupId] then
         pcall(missionCommands.removeItemForGroup, groupId, nav_menus[groupId])
         nav_menus[groupId] = nil
     end
 
-    AddNavMenu(groupId)
+    AddNavMenu(groupId, side)
 end
+
+-- Neutral has no zones to land at and no enemy to report, so only the two
+-- fighting sides get a menu.
+local function IsPlayableSide(side)
+    return side == coalition.side.BLUE or side == coalition.side.RED
+end
+
+local PLAYABLE_SIDES = {coalition.side.BLUE, coalition.side.RED}
 
 -- AI births outnumber player births by a wide margin on this mission, so the
 -- handler screens on the cheap fields first and only then asks for a name.
@@ -1056,11 +1097,11 @@ function navMenuEventHandler:onEvent(event)
 
     local sideOk, side = pcall(unitObj.getCoalition, unitObj)
 
-    if not sideOk or side ~= coalition.side.BLUE then
+    if not sideOk or not IsPlayableSide(side) then
         return
     end
 
-    local addOk, err = pcall(InstallNavMenu, groupId)
+    local addOk, err = pcall(InstallNavMenu, groupId, side)
 
     if not addOk then
         Log(env.error, "could not build menu for %s: %s", tostring(playerName), tostring(err))
@@ -1106,12 +1147,14 @@ local function Arm(_, time)
     -- Anyone already sitting in a seat when this armed got their birth event
     -- before the handler existed. One pass picks them up. This is a single call
     -- on arm, not a schedule: from here the menu is purely event driven.
-    for _, unitObj in pairs(coalition.getPlayers(coalition.side.BLUE) or {}) do
-        if unitObj and unitObj:isExist() then
-            local groupObj = unitObj:getGroup()
+    for _, side in ipairs(PLAYABLE_SIDES) do
+        for _, unitObj in pairs(coalition.getPlayers(side) or {}) do
+            if unitObj and unitObj:isExist() then
+                local groupObj = unitObj:getGroup()
 
-            if groupObj and groupObj:isExist() then
-                InstallNavMenu(groupObj:getID())
+                if groupObj and groupObj:isExist() then
+                    InstallNavMenu(groupObj:getID(), side)
+                end
             end
         end
     end

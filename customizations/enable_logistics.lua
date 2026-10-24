@@ -100,8 +100,25 @@ else
     POD_CARGO_REMINDER = "Supplies ride in an MXU-648 travel pod. No pod weight penalty is in effect."
 end
 
+-- Supplies aboard according to Foothold's carriedCargo entry for a group. The
+-- entry is a table on current builds and a bare source name on older ones, and
+-- nil when nothing is carried.
+local function CarriedSupplies(cargo)
+    if type(cargo) == "table" then
+        return tonumber(cargo.count) or 1
+    elseif cargo then
+        return 1
+    end
+
+    return 0
+end
+
+local function PodCargoMass(carried)
+    return (carried * FOOTHOLD_SUPPLY_WEIGHT_KG) + POD_CARGO_WEIGHT_KG
+end
+
 -- Wrapped rather than replaced so a Foothold update keeps whatever the stock
--- loadSupplies does. LogisticCommander instances inherit through __index, so
+-- loadSupplies and unloadSupplies do. LogisticCommander instances inherit through __index, so
 -- patching the class reaches the live commander. This file must load after
 -- zoneCommander.lua.
 if LogisticCommander and LogisticCommander.loadSupplies then
@@ -132,20 +149,13 @@ if LogisticCommander and LogisticCommander.loadSupplies then
         local unit = group and group:getUnit(1)
 
         if unit and pod_carriage_types[unit:getTypeName()] then
-            local cargo = self.carriedCargo[group:getID()]
-            local carried = 0
-
-            if type(cargo) == "table" then
-                carried = tonumber(cargo.count) or 1
-            elseif cargo then
-                carried = 1
-            end
+            local carried = CarriedSupplies(self.carriedCargo[group:getID()])
 
             -- Only charge for a load that actually happened. Foothold refuses for
             -- its own reasons, being airborne or out of zone stock among them, and
             -- leaves carriedCargo unset when it does.
             if carried > 0 then
-                local mass = (carried * FOOTHOLD_SUPPLY_WEIGHT_KG) + POD_CARGO_WEIGHT_KG
+                local mass = PodCargoMass(carried)
                 trigger.action.setUnitInternalCargo(unit:getName(), mass)
                 trigger.action.outTextForGroup(group:getID(), POD_CARGO_REMINDER, 20)
                 env.info(string.format("[A-10 Cargo]: %s loaded %d supplies, internal cargo set to %d kg",
@@ -154,6 +164,39 @@ if LogisticCommander and LogisticCommander.loadSupplies then
         end
 
         return result
+    end
+
+    -- A partial unload has Foothold set the cargo mass to what is left at 100 kg
+    -- a supply, which drops the pod charge while the jet is still carrying. Put
+    -- it back. The stock function settles carriedCargo and the mass before it
+    -- returns on every path; only the zone rewards are scheduled for later, so
+    -- reading the entry straight after the call sees the final state. A full
+    -- unload leaves nothing aboard and Foothold's zero mass stands, and a refused
+    -- one leaves the entry as it was, so re-applying the same mass is a no-op.
+    if LogisticCommander.unloadSupplies then
+        local baseUnloadSupplies = LogisticCommander.unloadSupplies
+
+        function LogisticCommander:unloadSupplies(groupName, supplyCount)
+            local result = baseUnloadSupplies(self, groupName, supplyCount)
+
+            local group = Group.getByName(groupName)
+            local unit = group and group:getUnit(1)
+
+            if unit and pod_carriage_types[unit:getTypeName()] then
+                local carried = CarriedSupplies(self.carriedCargo[group:getID()])
+
+                if carried > 0 then
+                    local mass = PodCargoMass(carried)
+                    trigger.action.setUnitInternalCargo(unit:getName(), mass)
+                    env.info(string.format("[A-10 Cargo]: %s has %d supplies left aboard, internal cargo set to %d kg",
+                        unit:getName(), carried, mass))
+                end
+            end
+
+            return result
+        end
+    else
+        env.error("[A-10 Cargo]: LogisticCommander.unloadSupplies unavailable, partial unloads will drop the pod weight.")
     end
 else
     env.error("[A-10 Cargo]: LogisticCommander unavailable, A-10 supply carriage not configured.")

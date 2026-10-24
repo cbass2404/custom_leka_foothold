@@ -84,6 +84,8 @@ local function RemoveToSpectator(case, time)
     local playerId = GetPlayerIdByName(case.playerName)
 
     if playerId and net.force_player_slot(playerId, 0, "") then
+        -- Server wide on purpose, both coalitions included in PvP: the removal is
+        -- meant to be seen by everyone. Do not narrow this to the pilot's side.
         trigger.action.outText(string.format(
             "SYSTEM: %s was returned to Spectator. Reason: the %s HMD is not permitted in this %s mission. NVGs remain legal.",
             case.playerName, case.typeName, MISSION_ERA), 20)
