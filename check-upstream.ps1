@@ -13,8 +13,8 @@
     build.ps1 calls it before compiling, so a re-pull that moved something
     stops the build rather than shipping a bundle that loads and does nothing.
 
-    It also checks the language server library list in .vscode/settings.json,
-    where a wrong path and an oversized file both fail in silence.
+    It also checks that every path in the language server library list in
+    .vscode/settings.json still exists, since a wrong path fails in silence.
 
     WHAT IT CANNOT DO
     Every check is a text search over upstream source. It proves a name is still
@@ -228,7 +228,7 @@ $Contract = @(
 )
 
 # --------------------------------------------------------------------------
-# Run the contract. Each upstream file is read once - zoneCommanderv2 is 3 MB
+# Run the contract. Each upstream file is read once - zoneCommanderv2 is 4.5 MB
 # and there is no reason to pay for that per check.
 # --------------------------------------------------------------------------
 $results = @()
@@ -279,10 +279,11 @@ foreach ($check in $Contract) {
 # --------------------------------------------------------------------------
 # Language server library list.
 #
-# Both failure modes here are silent: lua-language-server ignores a path that
-# does not exist without a word, and skips a file over preloadFileSize the same
-# way. Either one leaves an upstream global untyped, which reads in the editor
-# as a bug in our code rather than a misconfiguration.
+# lua-language-server ignores a path that does not exist without a word, which
+# leaves an upstream global untyped and reads in the editor as a bug in our code
+# rather than a misconfiguration. File size is deliberately not checked here:
+# preloadFileSize is set far above anything upstream will reach, so growth in a
+# re-pull is not a failure.
 # --------------------------------------------------------------------------
 $settingsPath = Join-Path $root '.vscode/settings.json'
 
@@ -297,9 +298,6 @@ else {
     # the only strings in it are relative paths, none of which contain '//'.
     $json = [System.IO.File]::ReadAllText($settingsPath) -replace '(?m)^\s*//.*$', ''
     $settings = $json | ConvertFrom-Json
-
-    $capKb = $settings.'Lua.workspace.preloadFileSize'
-    if (-not $capKb) { $capKb = 500 }   # lua-language-server default
 
     foreach ($entry in $settings.'Lua.workspace.library') {
         $libPath = Join-Path $root $entry
@@ -317,32 +315,9 @@ else {
             continue
         }
 
-        # Only files are size-capped; a directory is walked entry by entry.
-        if ($item.PSIsContainer) {
-            $results += [pscustomobject]@{
-                Status = 'ok'; Symbol = "library: $entry"; Detail = 'directory, present'
-                Used = '.vscode/settings.json'; Why = ''; Tags = ''
-            }
-            continue
-        }
-
-        $sizeKb = [math]::Round($item.Length / 1KB)
-
-        if ($sizeKb -gt $capKb) {
-            $results += [pscustomobject]@{
-                Status = 'FAIL'
-                Symbol = "library: $entry"
-                Detail = "$sizeKb KB exceeds preloadFileSize $capKb KB"
-                Used   = '.vscode/settings.json'
-                Why    = 'skipped without warning; raise Lua.workspace.preloadFileSize'
-                Tags   = ''
-            }
-            continue
-        }
-
         $results += [pscustomobject]@{
             Status = 'ok'; Symbol = "library: $entry"
-            Detail = "$sizeKb KB, under the $capKb KB cap"
+            Detail = $(if ($item.PSIsContainer) { 'directory, present' } else { 'file, present' })
             Used = '.vscode/settings.json'; Why = ''; Tags = ''
         }
     }

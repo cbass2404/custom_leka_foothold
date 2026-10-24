@@ -15,9 +15,12 @@
     "Lekas-Foothold/Setup files/COLDWAR_SETUP.lua"
   ],
 
-  // zoneCommanderv2 is 3.2 MB and the default cap is 500 KB, which would skip
-  // the one file that defines the types we care about.
-  "Lua.workspace.preloadFileSize": 4000,
+  // zoneCommanderv2 is 4.5 MB and grows with upstream; the default cap is
+  // 500 KB, and a file over the cap is skipped without warning. Set far above
+  // anything upstream will reach rather than tracked: the library above names
+  // individual files, never directories, so a high cap cannot pull in anything
+  // large we did not ask for.
+  "Lua.workspace.preloadFileSize": 50000,
 
   "Lua.diagnostics.disable": ["deprecated"],
   "Lua.runtime.version": "Lua 5.1"
