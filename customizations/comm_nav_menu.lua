@@ -193,10 +193,12 @@ local PROFILE_DE_PROP = {
     press = "hPa",
     datum = "QFE"
 }
+-- The Viggen is the oddball: Swedish rather than NATO, but its altimeter is
+-- set to QNH, not QFE.
 local PROFILE_VIGGEN = {
     dist = "SEmil",
     press = "hPa",
-    datum = "QFE"
+    datum = "QNH"
 }
 
 -- Rotary. Same pressure and datum as the nation's fast jets, distance always
