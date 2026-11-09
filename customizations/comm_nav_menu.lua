@@ -483,6 +483,10 @@ end
 --
 -- Sampling the atmosphere at y=0 for QNH is what MOOSE's ATIS does, so the
 -- model is known to extrapolate sensibly below terrain.
+--
+-- Values are truncated, never rounded to nearest, per ICAO Annex 3: hPa and
+-- mmHg to the whole unit, inHg to the hundredth. A low setting under-reads,
+-- leaving the aircraft higher than indicated rather than lower.
 local function FormatPressure(vec3, profile)
     local datum = profile.datum
     local sampleHeight = datum == "QFE" and (vec3.y or 0) or 0
@@ -500,12 +504,12 @@ local function FormatPressure(vec3, profile)
     local hPa = pascals / 100
 
     if profile.press == "inHg" then
-        return string.format("%s %.2f inHg", datum, hPa * HPA_TO_INHG)
+        return string.format("%s %.2f inHg", datum, math.floor(hPa * HPA_TO_INHG * 100) / 100)
     elseif profile.press == "mmHg" then
-        return string.format("%s %.0f mmHg", datum, hPa * HPA_TO_MMHG)
+        return string.format("%s %d mmHg", datum, math.floor(hPa * HPA_TO_MMHG))
     end
 
-    return string.format("%s %.0f hPa", datum, hPa)
+    return string.format("%s %d hPa", datum, math.floor(hPa))
 end
 
 -- ============================================================================
