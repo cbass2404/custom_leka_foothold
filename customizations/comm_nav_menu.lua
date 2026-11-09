@@ -193,12 +193,12 @@ local PROFILE_DE_PROP = {
     press = "hPa",
     datum = "QFE"
 }
--- The Viggen is the oddball: Swedish rather than NATO, but its altimeter is
--- set to QNH, not QFE.
+-- Swedish practice is QFE: the Viggen's own mission kneeboard lists a QFE for
+-- every waypoint, alongside a single mission QNH.
 local PROFILE_VIGGEN = {
     dist = "SEmil",
     press = "hPa",
-    datum = "QNH"
+    datum = "QFE"
 }
 
 -- Rotary. Same pressure and datum as the nation's fast jets, distance always
@@ -502,10 +502,10 @@ local function FormatPressure(vec3, profile)
     if profile.press == "inHg" then
         return string.format("%s %.2f inHg", datum, hPa * HPA_TO_INHG)
     elseif profile.press == "mmHg" then
-        return string.format("%s %.1f mmHg", datum, hPa * HPA_TO_MMHG)
+        return string.format("%s %.0f mmHg", datum, hPa * HPA_TO_MMHG)
     end
 
-    return string.format("%s %.1f hPa", datum, hPa)
+    return string.format("%s %.0f hPa", datum, hPa)
 end
 
 -- ============================================================================
